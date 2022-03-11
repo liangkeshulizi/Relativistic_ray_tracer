@@ -16,7 +16,7 @@ class Material:
         self.ambient= ambient
         self.diffuse_combination= diffuse_combination
 
-# 定义一个形状，给出 求交点 和 求法向量 的方法就行啦
+# 定义一个形状，给出 求交点 和 求法向量 的方法
 class Shape(ABC):
     '''储存形状、基础色'''
     @abstractmethod
@@ -146,9 +146,9 @@ class CompositeShape(Shape):
         distances= [np.where(np.isnan(distance), FARAWAY, distance) for distance in distances]
         nearest= reduce(np.minimum, distances)
 
-        # 注意啦！intersections是用来可见性竞争的！没有交点一定要返回 vec4(nan, nan, nan, nan) 鸭！（diatance会被自动记为）
-        # 怎么可能没有交点就用 vec4(0,0,0,0) 来凑呢？（color和norm都会根据distance进行extract，无交点处随便）
-        # 为了代码对称好看造成所有射线都有交点的错误 惨痛教训 --2022.2.6
+        # 注意啦！intersections是用来可见性竞争的！没有交点一定要返回 vec4(nan, nan, nan, nan) ！（distance会被自动记为FARAWAY）
+        # 不能没有交点就用 vec4(0,0,0,0) 。（color和norm都会根据distance进行extract，无交点处随便）
+        # 惨痛教训 --2022.2.6
 
         # TODO: 虽然修复了bug但出现了color和norm的大量冗余运算
         color= rgb(0,0,0)
@@ -188,17 +188,14 @@ class RectangularPrism(CompositeShape):
         z = self.depth / 2.0 + self.segment_radius
 
         endpoints = [
-            # "front" rectangle
             ((+x, +y, +z), (+x, -y, +z)),
             ((+x, -y, +z), (-x, -y, +z)),
             ((-x, -y, +z), (-x, +y, +z)),
             ((-x, +y, +z), (+x, +y, +z)),
-            # "back" rectangle
             ((+x, +y, -z), (+x, -y, -z)),
             ((+x, -y, -z), (-x, -y, -z)),
             ((-x, -y, -z), (-x, +y, -z)),
             ((-x, +y, -z), (+x, +y, -z)),
-            # connect the rectangles to make a prism
             ((+x, +y, +z), (+x, +y, -z)),
             ((+x, -y, +z), (+x, -y, -z)),
             ((-x, -y, +z), (-x, -y, -z)),
