@@ -7,16 +7,20 @@
 # Using Libraries: pillow, numpy
 
 from util import *
-from abc import ABC, abstractmethod
 
 class Material:
-    def __init__(self, gloss= 500, mirror= 0.5, ambient= rgb(0.08, 0.08, 0.08), diffuse_combination= 0.3):
+    def __init__(self, gloss= 700, mirror= 0.5, ambient= rgb(0.08, 0.08, 0.08), shadow= 0.2, diffuse_combination= .2):
         self.gloss= gloss
         self.mirror= mirror
         self.ambient= ambient
         self.diffuse_combination= diffuse_combination
+        self.shadow= shadow
+    def smoothen(self):
+        pass
+    def roughen(self):
+        pass
 
-# 定义一个形状，给出 求交点 和 求法向量 的方法
+# 定义一个形状，给出 求交点 和 求法向量 的方法就行了
 class Shape(ABC):
     '''储存形状、基础色'''
     @abstractmethod
@@ -146,9 +150,7 @@ class CompositeShape(Shape):
         distances= [np.where(np.isnan(distance), FARAWAY, distance) for distance in distances]
         nearest= reduce(np.minimum, distances)
 
-        # 注意啦！intersections是用来可见性竞争的！没有交点一定要返回 vec4(nan, nan, nan, nan) ！（distance会被自动记为FARAWAY）
-        # 不能没有交点就用 vec4(0,0,0,0) 。（color和norm都会根据distance进行extract，无交点处随便）
-        # 惨痛教训 --2022.2.6
+        # 注意啦！intersections是用来可见性竞争的！没有交点一定要返回 vec4(nan, nan, nan, nan) ！（diatance会被自动记为FARAWAY） 惨痛教训 --2022.2.6
 
         # TODO: 虽然修复了bug但出现了color和norm的大量冗余运算
         color= rgb(0,0,0)
@@ -287,29 +289,29 @@ class MovingObject:
 
             # Ambient
             color = self.material.ambient
-            
-            # Combination  纯个人审美，我觉得整体提高亮度不至于太黑会更好看，可以当成环境色的一部分
-            color += diffuse_color * self.material.diffuse_combination
 
             # Lambert shading (diffuse)
             N_obj= self.shape.get_norm(self.transform_point_from_ether(intersection_ether).vec3()) if (Norm is None) else Norm
             MtoL_obj= self.transform_point_from_ether(MtoL).vec3().normalize()
             lv = np.maximum(N_obj.dot(MtoL_obj), 0)
-            color += diffuse_color * lv * np.where(seelight,1,0.2)
+            color += diffuse_color * lv * np.where(seelight,1,self.material.shadow)
             
             # Blinn-Phong shading (specular)
             if self.material.gloss:
                 MtoO_obj= self.transform_point_from_ether(MtoO).vec3().normalize()
                 phong = N_obj.dot((MtoL_obj + MtoO_obj).normalize())
                 color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), self.material.gloss/4) * seelight
+            
+            # Combination  纯个人审美，我觉得整体提高亮度不至于太黑会更好看
+            color = color * (1 - self.material.diffuse_combination) + diffuse_color * seelight * self.material.diffuse_combination
+        
         else:
-            color= diffuse_color# * np.where(seelight,1,0.2)
+            color= diffuse_color * np.where(seelight,1,0.2)
         
         return color
 
-
 # 弄清参考系十分重要：
-# 1. 以太参考系；
+# 1. 以太参考系；(为了方便建立，和相机参考系相同)
 # 2. 相机参考系；
 # 3. 各个物体的参考系；
 def raytrace(starts_ether: vec4, directions_ether: vec4, objs, light_pos):
@@ -350,6 +352,76 @@ def raytrace(starts_ether: vec4, directions_ether: vec4, objs, light_pos):
 
     return color
 
+class Camera:
+    def __init__(self, center= ORIGIN, definition= DEFAUT_DEFINITION, camera_height= DEFAUT_CAMERA_HEIGHT, focal_length= DEFAUT_FOCAL_LENGTH):
+        width, height= definition
+        resolution= height/width
+        camera_width= camera_height/resolution
+        
+        self.center= center
+        self.height= height
+        self.width= width
+        self.camera_width= camera_width
+        self.camera_height= camera_height
+        self.focal_length= focal_length
+
+        self.bg= rgb(0,0,0)*np.repeat(0,width*height)
+        
+        self.direction= self._get_directions()
+
+    def _get_directions(self):
+        S = (-self.camera_width, self.camera_height, self.camera_width, -self.camera_height)
+        x= np.tile(np.linspace(S[0], S[2], self.width), self.height)
+        y= np.repeat(np.linspace(S[1], S[3], self.height), self.width)
+        z= self.focal_length
+        origin_to_image_times= abs(vec4(0,x,y,z))
+        # 光线在四维闵可夫斯基时空中的方向
+        direction= vec4(-origin_to_image_times, x, y, z) 
+        
+        return direction
+
+    def get_rays(self, shot_time):
+        # 光线在四维闵可夫斯基时空中的端点
+        start= self.center + vec4(shot_time, 0, 0, 0)
+
+        return start, self.direction
+
+class Scene:
+    def __init__(self, movingobjects, camera= Camera(), light_pos= DEFAUT_LIGHT_POS):
+        self.movingobjects= movingobjects
+        self.camera= camera
+        self.light_pos= light_pos
+
+    def add_object(self, movingobject: MovingObject):
+        self.movingobjects.append(movingobject)
+
+    def clear_objects(self):
+        self.movingobjects= []
+    
+    @timeit
+    def generate_image(self, shot_time= 0, file_name= 'image.png'):
+
+        start, direction= self.camera.get_rays(shot_time)
+
+        color= self.camera.bg + raytrace(start, direction, self.movingobjects, self.light_pos)
+
+        file_color = [Image.fromarray((255 * np.clip(c, 0, 1).reshape((self.camera.height, self.camera.width))).astype(np.uint8), "L") for c in color.components()]
+        Image.merge("RGB", file_color).save(file_name)
+
+        return file_name
+    
+    def generate_animation(self, t_start, t_end, frames= 300, dir= './render'): # 输出png序列
+        t00= time.time()
+        if not os.path.exists(dir):
+            os.mkdir(dir)
+        for shot_time, frame_count in np.linspace([t_start,1],[t_end,frames], frames):
+            print('开始渲染第%s帧...' % int(frame_count), end= '')
+            t0 = time.time()
+
+            self.generate_image(shot_time, os.path.join(dir, f"{int(frame_count)}.png"))
+            
+            t1= time.time()
+            print("预计剩余%i分钟" % (t1-t_start)/frame_count*(frames-frame_count)/60 )
 
 if __name__ == '__main__':
     (width, height) = (1920, 1080)      # 屏幕尺寸
@@ -369,7 +441,6 @@ if __name__ == '__main__':
 
     movingobjects= [MovingObject(shape4, beta, vec4(0, 0, 0, 2), None)]#[MovingObject(shape2, beta, offset2, Material(500)), MovingObject(shape3, (0,0,0), offset3, None)]
 
-    # Screen coordinates: x0, y0, x1, y1
     camera_height= 200
     camera_width= camera_height/resolution
     S = (-camera_width, camera_height, camera_width, -camera_height)

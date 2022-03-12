@@ -1,7 +1,8 @@
 import numpy as np
-import numbers
+import numbers, time, os
 from PIL import Image
 from functools import reduce
+from abc import ABC, abstractmethod
 
 def extract(cond, x):
     if isinstance(x, numbers.Number):
@@ -10,7 +11,6 @@ def extract(cond, x):
         return np.extract(cond, x)
 
 class vec4():
-    '''这是一个闵氏时空坐标'''
     def __init__(self, t, x, y, z):
         self.t, self.x, self.y, self.z = (t, x, y, z)
     def __mul__(self, other):
@@ -111,21 +111,13 @@ def quadratic_eqn_roots(a, b, c):
     return root1, root2
 
 def lorentz_boost(beta):
-    """
-    Return 4x4 numpy array of Lorentz boost for the velocity 3-vector.
-
-    This is a passive transformation into a reference frame moving at velocity
-    = beta with respect to the original frame. Note that c=1.
-    """
     beta = np.asarray(beta)
     beta_squared = np.inner(beta, beta)
     if beta_squared >= 1:
-        raise ValueError("beta^2 = {} not physically possible".format(beta_squared))
+        raise ValueError(f"beta²= {beta_squared} 超光速")
     if beta_squared == 0:
         return np.identity(4)
     gamma = 1 / np.sqrt(1 - beta_squared)
-    # see e.g. http://home.thep.lu.se/~malin/LectureNotesFYTA12_2016/SR6.pdf for
-    # derivation
     lambda_00 = np.matrix([[gamma]])
     lambda_0j = -gamma * np.matrix(beta)
     lambda_i0 = lambda_0j.transpose()
@@ -200,10 +192,22 @@ def range_func_from_image(filename, resize= (1.920, 1.080), offset= (0, 0), blac
     
     return range_func
 
-# Constants
-FARAWAY = 1.0e39
-ORIGIN = np.array([0, 0, 0, 0])
+def timeit(func):
+    def time_func(*args, **kwargs):
+        t0= time.time()
+        output= func(*args, **kwargs)
+        print(f'耗时{time.time() - t0}s...', end= '')
+        return output
+    return time_func
 
+FARAWAY= 1.0e39
+DEFAUT_CAMERA_HEIGHT= 200
+DEFAUT_FOCAL_LENGTH= 200
+ORIGIN= vec4(0, 0, 0, 0)
+DEFAUT_LIGHT_POS= vec3(2, 2, -2)# 默认光源位置
+LOW_DEFINITION= (533.3, 300)
+DEFAUT_DEFINITION= (1920, 1080)
+HIGH_DEFINITION= (4096, 3112)
 DEFAULT_OBJ_COLOR = rgb(1,1,1)
 BILIBILIPINK= rgb(1.0, 0.44140625, 0.62109375) # B站粉
 BILIBILIBLUE_A= rgb(0.41796875, 0.7578125, 0.92578125) # B站青
